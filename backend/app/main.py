@@ -78,6 +78,7 @@ def register(user: UserRegister):
     return {
         "message": "User registered successfully"
     }
+
 @app.post("/login")
 def login(user: UserLogin):
 
@@ -111,34 +112,60 @@ def login(user: UserLogin):
     "email": existing_user.email,
     "role": existing_user.role
 }
+
 @app.get("/search-buses")
-def search_buses(source: str, destination: str):
+def search_buses(
+    source: str,
+    destination: str
+):
 
     db = SessionLocal()
 
-    buses = db.query(Bus).filter(
-        Bus.source.ilike(f"%{source}%"),
-        Bus.destination.ilike(f"%{destination}%")
-    ).all()
+    buses = db.query(Bus).all()
 
     result = []
 
     for bus in buses:
-        result.append({
-            "id": bus.id,
-            "bus_name": bus.bus_name,
-            "bus_number": bus.bus_number,
-            "source": bus.source,
-            "destination": bus.destination,
-            "departure_time": str(bus.departure_time),
-            "arrival_time": str(bus.arrival_time),
-            "fare": bus.fare,
-            "total_seats": bus.total_seats
-        })
+
+        stops = db.query(BusStop).filter(
+            BusStop.bus_id == bus.id
+        ).order_by(
+            BusStop.stop_order
+        ).all()
+
+        source_order = None
+        destination_order = None
+
+        for stop in stops:
+
+            if stop.stop_name.lower() == source.lower():
+                source_order = stop.stop_order
+
+            if stop.stop_name.lower() == destination.lower():
+                destination_order = stop.stop_order
+
+        if (
+            source_order is not None and
+            destination_order is not None and
+            source_order < destination_order
+        ):
+
+            result.append({
+                "id": bus.id,
+                "bus_name": bus.bus_name,
+                "bus_number": bus.bus_number,
+                "source": source,
+                "destination": destination,
+                "departure_time": str(bus.departure_time),
+                "arrival_time": str(bus.arrival_time),
+                "fare": bus.fare,
+                "total_seats": bus.total_seats
+            })
 
     db.close()
 
     return result
+
 @app.post("/book-ticket")
 def book_ticket(data: BookingRequest):
 
@@ -183,6 +210,7 @@ def book_ticket(data: BookingRequest):
         "booking_id": booking.id,
         "message": "Ticket booked successfully"
     }
+
 @app.get("/booked-seats/{bus_id}")
 def get_booked_seats(
     bus_id: int,
@@ -207,6 +235,7 @@ def get_booked_seats(
     db.close()
 
     return seats
+
 @app.get("/my-bookings/{user_id}")
 def my_bookings(user_id: int):
 
@@ -239,6 +268,7 @@ def my_bookings(user_id: int):
     db.close()
 
     return result
+
 @app.put("/cancel-booking/{booking_id}")
 def cancel_booking(booking_id: int):
 
@@ -265,6 +295,7 @@ def cancel_booking(booking_id: int):
         "success": True,
         "message": "Booking cancelled successfully"
     }
+
 @app.post("/admin/add-bus")
 def add_bus(data: BusCreate):
 
@@ -332,6 +363,7 @@ def add_bus(data: BusCreate):
         "success": True,
         "message": "Bus added successfully"
     }
+
 @app.get("/admin/buses")
 def get_all_buses():
 
@@ -354,6 +386,7 @@ def get_all_buses():
     db.close()
 
     return result
+
 @app.delete("/admin/delete-bus/{bus_id}")
 def delete_bus(bus_id: int):
 
@@ -381,6 +414,7 @@ def delete_bus(bus_id: int):
         "success": True,
         "message": "Bus deleted successfully"
     }
+
 @app.get("/admin/bookings")
 def admin_bookings():
 
@@ -408,6 +442,7 @@ def admin_bookings():
     db.close()
 
     return result
+
 @app.get("/admin/stats")
 def admin_stats():
 
@@ -440,6 +475,7 @@ def admin_stats():
         "total_bookings": total_bookings,
         "total_revenue": total_revenue
     }
+
 @app.get("/admin/bus/{bus_id}")
 def get_bus(bus_id: int):
 
@@ -468,6 +504,7 @@ def get_bus(bus_id: int):
         "fare": bus.fare,
         "total_seats": bus.total_seats
     }
+
 @app.put("/admin/update-bus/{bus_id}")
 def update_bus(
     bus_id: int,
