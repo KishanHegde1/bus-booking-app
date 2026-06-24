@@ -185,6 +185,7 @@ def search_buses(
     db.close()
 
     return result
+
 @app.post("/book-ticket")
 def book_ticket(data: BookingRequest):
 
@@ -342,15 +343,16 @@ def add_bus(data: BusCreate):
         }
 
     new_bus = Bus(
-        bus_name=data.bus_name,
-        bus_number=data.bus_number,
-        source=data.source,
-        destination=data.destination,
-        departure_time=data.departure_time,
-        arrival_time=data.arrival_time,
-        fare=data.fare,
-        total_seats=data.total_seats
-    )
+    bus_name=data.bus_name,
+    bus_number=data.bus_number,
+    source=data.source,
+    destination=data.destination,
+    departure_time=data.departure_time,
+    arrival_time=data.arrival_time,
+    fare=data.fare,
+    total_seats=data.total_seats,
+    total_route_distance=data.total_route_distance
+)
 
     db.add(new_bus)
     db.commit()

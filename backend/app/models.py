@@ -26,6 +26,8 @@ class Bus(Base):
     fare = Column(Float)
     total_seats = Column(Integer)
 
+    total_route_distance = Column(Integer)
+
 class BusStop(Base):
     __tablename__ = "bus_stops"
     id = Column(Integer, primary_key=True, index=True)
@@ -35,6 +37,7 @@ class BusStop(Base):
     distance_from_source = Column(Integer)
     arrival_time = Column(String, nullable=True)
     departure_time = Column(String, nullable=True)
+    total_route_distance = Column(Integer)
 
 class Booking(Base):
     __tablename__ = "bookings"

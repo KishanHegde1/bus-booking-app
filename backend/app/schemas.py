@@ -31,7 +31,7 @@ class BusCreate(BaseModel):
     fare: float
     total_seats: int
     total_route_distance: int
-
+    
 class UpdateProfileRequest(BaseModel):
     full_name: str
     email: str
