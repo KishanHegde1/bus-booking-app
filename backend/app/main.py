@@ -136,19 +136,38 @@ def search_buses(
         source_order = None
         destination_order = None
 
+        source_distance = None
+        destination_distance = None
+
         for stop in stops:
 
             if stop.stop_name.lower() == source.lower():
+
                 source_order = stop.stop_order
+                source_distance = stop.distance_from_source
 
             if stop.stop_name.lower() == destination.lower():
+
                 destination_order = stop.stop_order
+                destination_distance = stop.distance_from_source
 
         if (
             source_order is not None and
             destination_order is not None and
             source_order < destination_order
         ):
+
+            journey_distance = (
+                destination_distance -
+                source_distance
+            )
+
+            calculated_fare = round(
+                (
+                    journey_distance /
+                    bus.total_route_distance
+                ) * bus.fare
+            )
 
             result.append({
                 "id": bus.id,
@@ -158,14 +177,14 @@ def search_buses(
                 "destination": destination,
                 "departure_time": str(bus.departure_time),
                 "arrival_time": str(bus.arrival_time),
-                "fare": bus.fare,
+                "fare": calculated_fare,
+                "journey_distance": journey_distance,
                 "total_seats": bus.total_seats
             })
 
     db.close()
 
     return result
-
 @app.post("/book-ticket")
 def book_ticket(data: BookingRequest):
 
@@ -301,6 +320,27 @@ def add_bus(data: BusCreate):
 
     db = SessionLocal()
 
+    stops = [
+        stop.strip()
+        for stop in data.intermediate_stops.split(",")
+        if stop.strip()
+    ]
+
+    distances = [
+        distance.strip()
+        for distance in data.stop_distances.split(",")
+        if distance.strip()
+    ]
+
+    if len(stops) != len(distances):
+
+        db.close()
+
+        return {
+            "success": False,
+            "message": "Stops and distances count mismatch"
+        }
+
     new_bus = Bus(
         bus_name=data.bus_name,
         bus_number=data.bus_number,
@@ -318,39 +358,37 @@ def add_bus(data: BusCreate):
 
     order = 1
 
-    # Source Stop
     source_stop = BusStop(
         bus_id=new_bus.id,
         stop_name=data.source,
-        stop_order=order
+        stop_order=order,
+        distance_from_source=0
     )
 
     db.add(source_stop)
 
     order += 1
 
-    # Intermediate Stops
-    if data.intermediate_stops.strip():
+    for stop, distance in zip(stops, distances):
 
-        stops = data.intermediate_stops.split(",")
+        stop_record = BusStop(
+            bus_id=new_bus.id,
+            stop_name=stop,
+            stop_order=order,
+            distance_from_source=int(distance)
+        )
 
-        for stop in stops:
+        db.add(stop_record)
 
-            stop_record = BusStop(
-                bus_id=new_bus.id,
-                stop_name=stop.strip(),
-                stop_order=order
-            )
+        order += 1
 
-            db.add(stop_record)
+    destination_distance = int(distances[-1])
 
-            order += 1
-
-    # Destination Stop
     destination_stop = BusStop(
         bus_id=new_bus.id,
         stop_name=data.destination,
-        stop_order=order
+        stop_order=order,
+        distance_from_source=destination_distance
     )
 
     db.add(destination_stop)

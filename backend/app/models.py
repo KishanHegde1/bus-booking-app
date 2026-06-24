@@ -32,6 +32,7 @@ class BusStop(Base):
     bus_id = Column(Integer)
     stop_name = Column(String)
     stop_order = Column(Integer)
+    distance_from_source = Column(Integer)
     arrival_time = Column(String, nullable=True)
     departure_time = Column(String, nullable=True)
 

@@ -25,10 +25,12 @@ class BusCreate(BaseModel):
     source: str
     destination: str
     intermediate_stops: str
+    stop_distances: str
     departure_time: str
     arrival_time: str
     fare: float
     total_seats: int
+    total_route_distance: int
 
 class UpdateProfileRequest(BaseModel):
     full_name: str
