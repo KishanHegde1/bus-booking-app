@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from sqlalchemy.orm import Session
 
 from .database import SessionLocal
-from .models import Bus, User, Booking
+from .models import Bus, User, Booking, BusStop
 
 from .schemas import (
     UserRegister,
@@ -265,23 +265,6 @@ def cancel_booking(booking_id: int):
         "success": True,
         "message": "Booking cancelled successfully"
     }
-@app.get("/admin/dashboard")
-def admin_dashboard():
-
-    db = SessionLocal()
-
-    total_users = db.query(User).count()
-    total_buses = db.query(Bus).count()
-    total_bookings = db.query(Booking).count()
-
-    db.close()
-
-    return {
-        "total_users": total_users,
-        "total_buses": total_buses,
-        "total_bookings": total_bookings
-    }
-
 @app.post("/admin/add-bus")
 def add_bus(data: BusCreate):
 
@@ -299,6 +282,48 @@ def add_bus(data: BusCreate):
     )
 
     db.add(new_bus)
+    db.commit()
+    db.refresh(new_bus)
+
+    order = 1
+
+    # Source Stop
+    source_stop = BusStop(
+        bus_id=new_bus.id,
+        stop_name=data.source,
+        stop_order=order
+    )
+
+    db.add(source_stop)
+
+    order += 1
+
+    # Intermediate Stops
+    if data.intermediate_stops.strip():
+
+        stops = data.intermediate_stops.split(",")
+
+        for stop in stops:
+
+            stop_record = BusStop(
+                bus_id=new_bus.id,
+                stop_name=stop.strip(),
+                stop_order=order
+            )
+
+            db.add(stop_record)
+
+            order += 1
+
+    # Destination Stop
+    destination_stop = BusStop(
+        bus_id=new_bus.id,
+        stop_name=data.destination,
+        stop_order=order
+    )
+
+    db.add(destination_stop)
+
     db.commit()
 
     db.close()
