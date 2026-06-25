@@ -384,7 +384,7 @@ def add_bus(data: BusCreate):
 
         order += 1
 
-    destination_distance = int(distances[-1])
+    destination_distance = data.total_route_distance
 
     destination_stop = BusStop(
         bus_id=new_bus.id,
