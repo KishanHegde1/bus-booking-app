@@ -19,6 +19,8 @@ class BookingRequest(BaseModel):
     seat_number: str
     journey_date: str
 
+    fare: float
+    
 class BusCreate(BaseModel):
     bus_name: str
     bus_number: str

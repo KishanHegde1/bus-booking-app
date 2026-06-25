@@ -232,14 +232,17 @@ def book_ticket(data: BookingRequest):
 
     # Create Booking
     booking = Booking(
-        user_id=data.user_id,
-        bus_id=data.bus_id,
-        seat_number=data.seat_number,
-        passenger_name=data.passenger_name,
-        passenger_age=data.passenger_age,
-        journey_date=data.journey_date,
-        booking_status="CONFIRMED"
-    )
+    user_id=data.user_id,
+    bus_id=data.bus_id,
+    seat_number=data.seat_number,
+    passenger_name=data.passenger_name,
+    passenger_age=data.passenger_age,
+    journey_date=data.journey_date,
+
+    fare=data.fare,
+
+    booking_status="CONFIRMED"
+)
 
     db.add(booking)
 
@@ -656,12 +659,7 @@ def admin_stats():
     total_revenue = 0
 
     for booking in bookings:
-        bus = db.query(Bus).filter(
-            Bus.id == booking.bus_id
-        ).first()
-
-        if bus:
-            total_revenue += bus.fare
+       total_revenue += booking.fare
 
     db.close()
 

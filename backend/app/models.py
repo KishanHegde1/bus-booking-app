@@ -40,6 +40,7 @@ class BusStop(Base):
 
 class Booking(Base):
     __tablename__ = "bookings"
+
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer)
     bus_id = Column(Integer)
@@ -47,6 +48,9 @@ class Booking(Base):
     passenger_name = Column(String)
     passenger_age = Column(Integer)
     journey_date = Column(String)
+
+    fare = Column(Float)
+
     booking_status = Column(String)
 
 class SeatLock(Base):
