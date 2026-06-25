@@ -44,3 +44,15 @@ class ChangePasswordRequest(BaseModel):
 class ForgotPasswordRequest(BaseModel):
     email: str
     new_password: str
+
+class SeatLockRequest(BaseModel):
+    user_id: int
+    bus_id: int
+    journey_date: str
+    seats: list[str]
+
+
+class ReleaseSeatRequest(BaseModel):
+    user_id: int
+    bus_id: int
+    journey_date: str

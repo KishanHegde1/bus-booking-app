@@ -2,7 +2,8 @@ from fastapi import FastAPI
 from sqlalchemy.orm import Session
 
 from .database import SessionLocal
-from .models import Bus, User, Booking, BusStop
+from .models import Bus, User, Booking, BusStop, SeatLock
+from datetime import datetime, timedelta
 
 from .schemas import (
     UserRegister,
@@ -11,7 +12,9 @@ from .schemas import (
     BusCreate,
     UpdateProfileRequest,
     ChangePasswordRequest,
-    ForgotPasswordRequest
+    ForgotPasswordRequest,
+    SeatLockRequest,
+    ReleaseSeatRequest
 )
 
 app = FastAPI()
@@ -191,14 +194,16 @@ def book_ticket(data: BookingRequest):
 
     db = SessionLocal()
 
+    # Check if seat is already permanently booked
     existing_booking = db.query(Booking).filter(
-    Booking.bus_id == data.bus_id,
-    Booking.seat_number == data.seat_number,
-    Booking.journey_date == data.journey_date,
-    Booking.booking_status == "CONFIRMED"
-).first()
+        Booking.bus_id == data.bus_id,
+        Booking.seat_number == data.seat_number,
+        Booking.journey_date == data.journey_date,
+        Booking.booking_status == "CONFIRMED"
+    ).first()
 
     if existing_booking:
+
         db.close()
 
         return {
@@ -206,20 +211,41 @@ def book_ticket(data: BookingRequest):
             "message": "Seat already booked"
         }
 
+    # Check whether this seat is locked by this user
+    seat_lock = db.query(SeatLock).filter(
+        SeatLock.user_id == data.user_id,
+        SeatLock.bus_id == data.bus_id,
+        SeatLock.seat_number == data.seat_number,
+        SeatLock.journey_date == data.journey_date,
+        SeatLock.status == "LOCKED",
+        SeatLock.expires_at > datetime.now()
+    ).first()
+
+    if not seat_lock:
+
+        db.close()
+
+        return {
+            "success": False,
+            "message": "Seat lock expired. Please select seat again."
+        }
+
+    # Create Booking
     booking = Booking(
-    user_id=data.user_id,
-    bus_id=data.bus_id,
-    seat_number=data.seat_number,
-
-    passenger_name=data.passenger_name,
-    passenger_age=data.passenger_age,
-
-    journey_date=data.journey_date,
-
-    booking_status="CONFIRMED"
-)
+        user_id=data.user_id,
+        bus_id=data.bus_id,
+        seat_number=data.seat_number,
+        passenger_name=data.passenger_name,
+        passenger_age=data.passenger_age,
+        journey_date=data.journey_date,
+        booking_status="CONFIRMED"
+    )
 
     db.add(booking)
+
+    # Remove temporary lock
+    db.delete(seat_lock)
+
     db.commit()
     db.refresh(booking)
 
@@ -239,22 +265,152 @@ def get_booked_seats(
 
     db = SessionLocal()
 
+    # Delete expired locks
+    db.query(SeatLock).filter(
+        SeatLock.expires_at < datetime.now()
+    ).delete()
+
+    db.commit()
+
     bookings = db.query(Booking).filter(
         Booking.bus_id == bus_id,
         Booking.journey_date == journey_date,
         Booking.booking_status == "CONFIRMED"
     ).all()
 
-    seats = []
+    locks = db.query(SeatLock).filter(
+        SeatLock.bus_id == bus_id,
+        SeatLock.journey_date == journey_date,
+        SeatLock.status == "LOCKED",
+        SeatLock.expires_at > datetime.now()
+    ).all()
+
+    booked = []
 
     for booking in bookings:
-        seats.append(
-            booking.seat_number
-        )
+        booked.append({
+            "seat_number": booking.seat_number,
+            "status": "BOOKED"
+        })
+
+    for lock in locks:
+        booked.append({
+            "seat_number": lock.seat_number,
+            "status": "LOCKED"
+        })
 
     db.close()
 
-    return seats
+    return booked
+
+@app.post("/lock-seats")
+def lock_seats(data: SeatLockRequest):
+
+    db = SessionLocal()
+
+    # Delete expired locks
+    db.query(SeatLock).filter(
+        SeatLock.expires_at < datetime.now()
+    ).delete()
+
+    db.commit()
+
+    for seat in data.seats:
+
+        booking = db.query(Booking).filter(
+            Booking.bus_id == data.bus_id,
+            Booking.journey_date == data.journey_date,
+            Booking.seat_number == seat,
+            Booking.booking_status == "CONFIRMED"
+        ).first()
+
+        if booking:
+
+            db.close()
+
+            return {
+                "success": False,
+                "message": f"Seat {seat} already booked"
+            }
+
+        lock = db.query(SeatLock).filter(
+            SeatLock.bus_id == data.bus_id,
+            SeatLock.journey_date == data.journey_date,
+            SeatLock.seat_number == seat,
+            SeatLock.status == "LOCKED",
+            SeatLock.expires_at > datetime.now()
+        ).first()
+
+        if lock and lock.user_id != data.user_id:
+
+            db.close()
+
+            return {
+                "success": False,
+                "message": f"Seat {seat} temporarily locked"
+            }
+
+    expires = datetime.now() + timedelta(minutes=10)
+
+    for seat in data.seats:
+
+        existing = db.query(SeatLock).filter(
+            SeatLock.user_id == data.user_id,
+            SeatLock.bus_id == data.bus_id,
+            SeatLock.journey_date == data.journey_date,
+            SeatLock.seat_number == seat
+        ).first()
+
+        if existing:
+
+            existing.locked_at = datetime.now()
+            existing.expires_at = expires
+            existing.status = "LOCKED"
+
+        else:
+
+            db.add(
+                SeatLock(
+                    user_id=data.user_id,
+                    bus_id=data.bus_id,
+                    seat_number=seat,
+                    journey_date=data.journey_date,
+                    locked_at=datetime.now(),
+                    expires_at=expires,
+                    status="LOCKED"
+                )
+            )
+
+    db.commit()
+
+    db.close()
+
+    return {
+        "success": True,
+        "message": "Seats locked successfully",
+        "expires_in": 600
+    }
+
+@app.post("/release-seats")
+def release_seats(data: ReleaseSeatRequest):
+
+    db = SessionLocal()
+
+    db.query(SeatLock).filter(
+        SeatLock.user_id == data.user_id,
+        SeatLock.bus_id == data.bus_id,
+        SeatLock.journey_date == data.journey_date,
+        SeatLock.status == "LOCKED"
+    ).delete()
+
+    db.commit()
+
+    db.close()
+
+    return {
+        "success": True,
+        "message": "Seat lock released"
+    }
 
 @app.get("/my-bookings/{user_id}")
 def my_bookings(user_id: int):

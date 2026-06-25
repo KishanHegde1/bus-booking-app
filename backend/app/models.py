@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float
+from sqlalchemy import Column, Integer, String, Float, DateTime
 from .database import Base
 
 
@@ -48,3 +48,15 @@ class Booking(Base):
     passenger_age = Column(Integer)
     journey_date = Column(String)
     booking_status = Column(String)
+
+class SeatLock(Base):
+    __tablename__ = "seat_locks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer)
+    bus_id = Column(Integer)
+    seat_number = Column(String)
+    journey_date = Column(String)
+    locked_at = Column(DateTime)
+    expires_at = Column(DateTime)
+    status = Column(String, default="LOCKED")
