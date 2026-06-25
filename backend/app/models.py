@@ -37,7 +37,6 @@ class BusStop(Base):
     distance_from_source = Column(Integer)
     arrival_time = Column(String, nullable=True)
     departure_time = Column(String, nullable=True)
-    total_route_distance = Column(Integer)
 
 class Booking(Base):
     __tablename__ = "bookings"
