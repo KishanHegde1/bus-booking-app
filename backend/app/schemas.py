@@ -1,4 +1,5 @@
 from pydantic import BaseModel
+from typing import Optional
 
 class UserRegister(BaseModel):
     full_name: str
@@ -20,6 +21,8 @@ class BookingRequest(BaseModel):
     journey_date: str
 
     fare: float
+    source: Optional[str] = None
+    destination: Optional[str] = None
     
 class BusCreate(BaseModel):
     bus_name: str
@@ -58,3 +61,4 @@ class ReleaseSeatRequest(BaseModel):
     user_id: int
     bus_id: int
     journey_date: str
+    seats: Optional[list[str]] = None
