@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 
 from .database import get_db
 from .models import Bus, User, Booking, BusStop, SeatLock
+from .qr_utils import generate_secure_token
 from datetime import datetime, timedelta
 
 from .schemas import (
@@ -467,14 +468,24 @@ def book_ticket(
     # Remove temporary lock
     db.delete(seat_lock)
 
+
+    # Generate secure QR token
+    booking.qr_code = generate_secure_token()
+
+    # Default ticket status
+    booking.ticket_status = "UNUSED"
+
     db.commit()
     db.refresh(booking)
 
+
     return {
-        "success": True,
-        "booking_id": booking.id,
-        "message": "Ticket booked successfully"
-    }
+    "success": True,
+    "booking_id": booking.id,
+    "qr_code": booking.qr_code,
+    "ticket_status": booking.ticket_status,
+    "message": "Ticket booked successfully"
+}
 
 @app.get("/booked-seats/{bus_id}")
 def get_booked_seats(
@@ -674,17 +685,21 @@ def my_bookings(
         ).first()
 
         result.append({
-            "booking_id": booking.id,
-            "bus_name": bus.bus_name if bus else "",
-            "source": bus.source if bus else "",
-            "destination": bus.destination if bus else "",
-            "journey_date": booking.journey_date,
-            "seat_number": booking.seat_number,
-            "passenger_name": booking.passenger_name,
-            "passenger_age": booking.passenger_age,
-            "status": booking.booking_status
-        })
+    "booking_id": booking.id,
+    "bus_name": bus.bus_name if bus else "",
+    "source": bus.source if bus else "",
+    "destination": bus.destination if bus else "",
+    "journey_date": booking.journey_date,
+    "seat_number": booking.seat_number,
+    "passenger_name": booking.passenger_name,
+    "passenger_age": booking.passenger_age,
+    "status": booking.booking_status,
 
+    # QR Ticket
+    "qr_code": booking.qr_code,
+    "ticket_status": booking.ticket_status,
+})
+        
     return result
 
 @app.put("/cancel-booking/{booking_id}")

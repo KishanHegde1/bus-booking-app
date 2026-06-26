@@ -53,6 +53,13 @@ class Booking(Base):
 
     booking_status = Column(String)
 
+    # -------------------------
+    # QR Ticket Fields
+    # -------------------------
+    qr_code = Column(String, unique=True, nullable=True)
+    ticket_status = Column(String, default="UNUSED")
+    scanned_at = Column(DateTime, nullable=True)
+
 class SeatLock(Base):
     __tablename__ = "seat_locks"
 
