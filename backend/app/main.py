@@ -629,7 +629,19 @@ def lock_seats(
                 )
             )
 
-    db.commit()
+    try:
+        db.commit()
+
+    except Exception as e:
+        db.rollback()
+
+        import traceback
+        traceback.print_exc()
+
+        return {
+            "success": False,
+            "message": str(e)
+        }
 
     return {
         "success": True,
