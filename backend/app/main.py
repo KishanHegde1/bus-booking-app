@@ -581,6 +581,49 @@ def get_booked_seats(
 
     return booked
 
+@app.get("/my-bookings/{user_id}")
+def get_my_bookings(
+    user_id: int,
+    db: Session = Depends(get_db)
+):
+
+    user = db.query(User).filter(
+        User.id == user_id
+    ).first()
+
+    if not user:
+        return []
+
+    bookings = db.query(Booking).filter(
+        Booking.user_id == user_id
+    ).order_by(
+        Booking.id.desc()
+    ).all()
+
+    result = []
+
+    for booking in bookings:
+
+        bus = db.query(Bus).filter(
+            Bus.id == booking.bus_id
+        ).first()
+
+        result.append({
+            "booking_id": booking.id,
+            "bus_name": bus.bus_name if bus else "",
+            "source": bus.source if bus else "",
+            "destination": bus.destination if bus else "",
+            "journey_date": booking.journey_date.strftime("%Y-%m-%d"),
+            "seat_number": booking.seat_number,
+            "passenger_name": booking.passenger_name,
+            "passenger_age": booking.passenger_age,
+            "fare": booking.fare,
+            "booking_status": booking.booking_status,
+            "qr_code": booking.qr_code,
+            "ticket_status": booking.ticket_status
+        })
+
+    return result
 
 @app.post("/lock-seats")
 def lock_seats(
@@ -1116,23 +1159,30 @@ def forgot_password(
     db: Session = Depends(get_db)
 ):
 
+    # Clean email
+    email = data.email.strip().lower()
+
+    # Check whether email exists
     user = db.query(User).filter(
-        User.email == data.email
+        User.email == email
     ).first()
 
     if not user:
-
         return {
             "success": False,
             "message": "Email not found"
         }
 
+    # Update password
     user.password_hash = data.new_password
 
     try:
         db.commit()
+        db.refresh(user)
+
     except Exception as e:
         db.rollback()
+
         return {
             "success": False,
             "message": str(e)
