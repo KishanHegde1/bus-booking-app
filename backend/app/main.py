@@ -417,16 +417,27 @@ def book_ticket(
             "message": "Invalid fare"
         }
 
+    # Convert journey date once
+    try:
+       journey_date = datetime.strptime(
+           data.journey_date,
+           "%Y-%m-%d"
+        ).date()
+    except ValueError:
+        return {
+            "success": False,
+            "message": "Invalid journey date"
+        }
+
     # Check if seat is already permanently booked
     existing_booking = db.query(Booking).filter(
         Booking.bus_id == data.bus_id,
         Booking.seat_number == seat_number,
-        Booking.journey_date == data.journey_date,
+        Booking.journey_date == journey_date,
         Booking.booking_status == "CONFIRMED"
     ).first()
 
     if existing_booking:
-
         return {
             "success": False,
             "message": "Seat already booked"
@@ -437,13 +448,12 @@ def book_ticket(
         SeatLock.user_id == data.user_id,
         SeatLock.bus_id == data.bus_id,
         SeatLock.seat_number == seat_number,
-        SeatLock.journey_date == data.journey_date,
+        SeatLock.journey_date == journey_date,
         SeatLock.status == "LOCKED",
         SeatLock.expires_at > datetime.now()
     ).first()
 
     if not seat_lock:
-
         return {
             "success": False,
             "message": "Seat lock expired. Please select seat again."
@@ -451,23 +461,20 @@ def book_ticket(
 
     # Create Booking
     booking = Booking(
-    user_id=data.user_id,
-    bus_id=data.bus_id,
-    seat_number=seat_number,
-    passenger_name=data.passenger_name,
-    passenger_age=data.passenger_age,
-    journey_date=data.journey_date,
-
-    fare=fare,
-
-    booking_status="CONFIRMED"
-)
+        user_id=data.user_id,
+        bus_id=data.bus_id,
+        seat_number=seat_number,
+        passenger_name=data.passenger_name,
+        passenger_age=data.passenger_age,
+        journey_date=journey_date,
+        fare=fare,
+        booking_status="CONFIRMED"
+    )
 
     db.add(booking)
 
     # Remove temporary lock
     db.delete(seat_lock)
-
 
     # Generate secure QR token
     booking.qr_code = generate_secure_token()
@@ -475,17 +482,23 @@ def book_ticket(
     # Default ticket status
     booking.ticket_status = "UNUSED"
 
-    db.commit()
-    db.refresh(booking)
-
+    try:
+       db.commit()
+       db.refresh(booking)
+    except Exception as e:
+        db.rollback()
+        return {
+            "success": False,
+            "message": str(e)
+        }
 
     return {
-    "success": True,
-    "booking_id": booking.id,
-    "qr_code": booking.qr_code,
-    "ticket_status": booking.ticket_status,
-    "message": "Ticket booked successfully"
-}
+        "success": True,
+        "booking_id": booking.id,
+        "qr_code": booking.qr_code,
+        "ticket_status": booking.ticket_status,
+        "message": "Ticket booked successfully"
+    }
 
 @app.get("/booked-seats/{bus_id}")
 def get_booked_seats(
@@ -493,6 +506,15 @@ def get_booked_seats(
     journey_date: str,
     db: Session = Depends(get_db)
 ):
+
+    # Convert string to date
+    try:
+       journey_date = datetime.strptime(
+           journey_date,
+           "%Y-%m-%d"
+       ).date()
+    except ValueError:
+        return []
 
     # Delete expired locks
     _delete_expired_locks(db)
@@ -556,6 +578,17 @@ def lock_seats(
 
     seats = _clean_seats(data.seats)
 
+    try:
+       journey_date = datetime.strptime(
+           data.journey_date,
+           "%Y-%m-%d"
+        ).date()
+    except ValueError:
+        return {
+            "success": False,
+            "message": "Invalid journey date"
+        }
+
     if not seats:
         return {
             "success": False,
@@ -571,7 +604,7 @@ def lock_seats(
 
         booking = db.query(Booking).filter(
             Booking.bus_id == data.bus_id,
-            Booking.journey_date == data.journey_date,
+            Booking.journey_date == journey_date,
             Booking.seat_number == seat,
             Booking.booking_status == "CONFIRMED"
         ).first()
@@ -585,7 +618,7 @@ def lock_seats(
 
         lock = db.query(SeatLock).filter(
             SeatLock.bus_id == data.bus_id,
-            SeatLock.journey_date == data.journey_date,
+            SeatLock.journey_date == journey_date,
             SeatLock.seat_number == seat,
             SeatLock.status == "LOCKED",
             SeatLock.expires_at > datetime.now()
@@ -605,7 +638,7 @@ def lock_seats(
         existing = db.query(SeatLock).filter(
             SeatLock.user_id == data.user_id,
             SeatLock.bus_id == data.bus_id,
-            SeatLock.journey_date == data.journey_date,
+            SeatLock.journey_date == journey_date,
             SeatLock.seat_number == seat
         ).first()
 
@@ -622,7 +655,7 @@ def lock_seats(
                     user_id=data.user_id,
                     bus_id=data.bus_id,
                     seat_number=seat,
-                    journey_date=data.journey_date,
+                    journey_date=journey_date,
                     locked_at=datetime.now(),
                     expires_at=expires,
                     status="LOCKED"
@@ -654,11 +687,23 @@ def release_seats(
     data: ReleaseSeatRequest,
     db: Session = Depends(get_db)
 ):
+    # Convert incoming string to Python date
+    try:
+       journey_date = datetime.strptime(
+           data.journey_date,
+           "%Y-%m-%d"
+        ).date()
+    except ValueError:
+        return {
+            "success": False,
+            "message": "Invalid journey date"
+        }
+
 
     query = db.query(SeatLock).filter(
         SeatLock.user_id == data.user_id,
         SeatLock.bus_id == data.bus_id,
-        SeatLock.journey_date == data.journey_date,
+        SeatLock.journey_date == journey_date,
         SeatLock.status == "LOCKED"
     )
 
@@ -701,7 +746,7 @@ def my_bookings(
     "bus_name": bus.bus_name if bus else "",
     "source": bus.source if bus else "",
     "destination": bus.destination if bus else "",
-    "journey_date": booking.journey_date,
+    "journey_date": booking.journey_date.strftime("%Y-%m-%d"),
     "seat_number": booking.seat_number,
     "passenger_name": booking.passenger_name,
     "passenger_age": booking.passenger_age,
@@ -854,7 +899,7 @@ def admin_bookings(db: Session = Depends(get_db)):
             "booking_id": booking.id,
             "passenger_name": booking.passenger_name,
             "seat_number": booking.seat_number,
-            "journey_date": booking.journey_date,
+            "journey_date": booking.journey_date.strftime("%Y-%m-%d"),
             "booking_status": booking.booking_status,
             "bus_name": bus.bus_name if bus else ""
         })
