@@ -1,6 +1,5 @@
 from fastapi import Depends, FastAPI
 from sqlalchemy.orm import Session
-
 from .database import get_db
 from .models import Bus, User, Booking, BusStop, SeatLock
 from .qr_utils import generate_secure_token
@@ -262,29 +261,59 @@ def register(
     db: Session = Depends(get_db)
 ):
 
-    existing_user = db.query(User).filter(
-        User.email == user.email
+    # Clean input
+    full_name = user.full_name.strip()
+    email = user.email.strip().lower()
+    phone = user.phone.strip()
+
+    # Check if email already exists
+    existing_email = db.query(User).filter(
+        User.email == email
     ).first()
 
-    if existing_user:
+    if existing_email:
         return {
             "success": False,
             "message": "Email already registered"
         }
 
+    # Check if phone number already exists
+    existing_phone = db.query(User).filter(
+        User.phone == phone
+    ).first()
+
+    if existing_phone:
+        return {
+            "success": False,
+            "message": "Phone number already registered"
+        }
+
+    # Create new user
     new_user = User(
-        full_name=user.full_name,
-        email=user.email,
-        phone=user.phone,
+        full_name=full_name,
+        email=email,
+        phone=phone,
         password_hash=user.password
     )
 
     db.add(new_user)
-    db.commit()
+
+    try:
+        db.commit()
+        db.refresh(new_user)
+
+    except Exception as e:
+        db.rollback()
+
+        return {
+            "success": False,
+            "message": str(e)
+        }
 
     return {
         "success": True,
-        "message": "User registered successfully"
+        "message": "User registered successfully",
+        "user_id": new_user.id
     }
 
 @app.post("/login")
@@ -293,8 +322,10 @@ def login(
     db: Session = Depends(get_db)
 ):
 
+    email = user.email.strip().lower()
+
     existing_user = db.query(User).filter(
-        User.email == user.email
+        User.email == email
     ).first()
 
     if not existing_user:
@@ -310,13 +341,13 @@ def login(
         }
 
     return {
-    "success": True,
-    "message": "Login successful",
-    "user_id": existing_user.id,
-    "name": existing_user.full_name,
-    "email": existing_user.email,
-    "role": existing_user.role
-}
+        "success": True,
+        "message": "Login successful",
+        "user_id": existing_user.id,
+        "name": existing_user.full_name,
+        "email": existing_user.email,
+        "role": existing_user.role
+    }
 
 @app.get("/search-buses")
 def search_buses(
@@ -550,12 +581,14 @@ def get_booked_seats(
 
     return booked
 
+
 @app.post("/lock-seats")
 def lock_seats(
     data: SeatLockRequest,
     db: Session = Depends(get_db)
 ):
 
+    # Check user
     user = db.query(User).filter(
         User.id == data.user_id
     ).first()
@@ -566,6 +599,7 @@ def lock_seats(
             "message": "User not found"
         }
 
+    # Check bus
     bus = db.query(Bus).filter(
         Bus.id == data.bus_id
     ).first()
@@ -576,18 +610,8 @@ def lock_seats(
             "message": "Bus not found"
         }
 
+    # Clean seat numbers
     seats = _clean_seats(data.seats)
-
-    try:
-       journey_date = datetime.strptime(
-           data.journey_date,
-           "%Y-%m-%d"
-        ).date()
-    except ValueError:
-        return {
-            "success": False,
-            "message": "Invalid journey date"
-        }
 
     if not seats:
         return {
@@ -595,11 +619,23 @@ def lock_seats(
             "message": "No seats selected"
         }
 
-    # Delete expired locks
-    _delete_expired_locks(db)
+    # Convert journey date
+    try:
+        journey_date = datetime.strptime(
+            data.journey_date,
+            "%Y-%m-%d"
+        ).date()
+    except ValueError:
+        return {
+            "success": False,
+            "message": "Invalid journey date"
+        }
 
+    # Remove expired locks
+    _delete_expired_locks(db)
     db.commit()
 
+    # Check all selected seats before locking
     for seat in seats:
 
         booking = db.query(Booking).filter(
@@ -610,7 +646,6 @@ def lock_seats(
         ).first()
 
         if booking:
-
             return {
                 "success": False,
                 "message": f"Seat {seat} already booked"
@@ -625,14 +660,14 @@ def lock_seats(
         ).first()
 
         if lock and lock.user_id != data.user_id:
-
             return {
                 "success": False,
-                "message": f"Seat {seat} temporarily locked"
+                "message": f"Seat {seat} is temporarily locked"
             }
 
     expires = datetime.now() + timedelta(minutes=10)
 
+    # Create or update seat locks
     for seat in seats:
 
         existing = db.query(SeatLock).filter(
@@ -650,17 +685,17 @@ def lock_seats(
 
         else:
 
-            db.add(
-                SeatLock(
-                    user_id=data.user_id,
-                    bus_id=data.bus_id,
-                    seat_number=seat,
-                    journey_date=journey_date,
-                    locked_at=datetime.now(),
-                    expires_at=expires,
-                    status="LOCKED"
-                )
+            lock = SeatLock(
+                user_id=data.user_id,
+                bus_id=data.bus_id,
+                seat_number=seat,
+                journey_date=journey_date,
+                locked_at=datetime.now(),
+                expires_at=expires,
+                status="LOCKED"
             )
+
+            db.add(lock)
 
     try:
         db.commit()
@@ -682,16 +717,40 @@ def lock_seats(
         "expires_in": 600
     }
 
+
 @app.post("/release-seats")
 def release_seats(
     data: ReleaseSeatRequest,
     db: Session = Depends(get_db)
 ):
-    # Convert incoming string to Python date
+
+    # Check user
+    user = db.query(User).filter(
+        User.id == data.user_id
+    ).first()
+
+    if not user:
+        return {
+            "success": False,
+            "message": "User not found"
+        }
+
+    # Check bus
+    bus = db.query(Bus).filter(
+        Bus.id == data.bus_id
+    ).first()
+
+    if not bus:
+        return {
+            "success": False,
+            "message": "Bus not found"
+        }
+
+    # Convert journey date
     try:
-       journey_date = datetime.strptime(
-           data.journey_date,
-           "%Y-%m-%d"
+        journey_date = datetime.strptime(
+            data.journey_date,
+            "%Y-%m-%d"
         ).date()
     except ValueError:
         return {
@@ -699,7 +758,7 @@ def release_seats(
             "message": "Invalid journey date"
         }
 
-
+    # Build query
     query = db.query(SeatLock).filter(
         SeatLock.user_id == data.user_id,
         SeatLock.bus_id == data.bus_id,
@@ -707,6 +766,7 @@ def release_seats(
         SeatLock.status == "LOCKED"
     )
 
+    # Release only selected seats (optional)
     seats = _clean_seats(data.seats or [])
 
     if seats:
@@ -714,74 +774,22 @@ def release_seats(
             SeatLock.seat_number.in_(seats)
         )
 
-    query.delete(synchronize_session=False)
+    released = query.delete(
+        synchronize_session=False
+    )
 
-    db.commit()
-
-    return {
-        "success": True,
-        "message": "Seat lock released"
-    }
-
-@app.get("/my-bookings/{user_id}")
-def my_bookings(
-    user_id: int,
-    db: Session = Depends(get_db)
-):
-
-    bookings = db.query(Booking).filter(
-        Booking.user_id == user_id
-    ).all()
-
-    result = []
-
-    for booking in bookings:
-
-        bus = db.query(Bus).filter(
-            Bus.id == booking.bus_id
-        ).first()
-
-        result.append({
-    "booking_id": booking.id,
-    "bus_name": bus.bus_name if bus else "",
-    "source": bus.source if bus else "",
-    "destination": bus.destination if bus else "",
-    "journey_date": booking.journey_date.strftime("%Y-%m-%d"),
-    "seat_number": booking.seat_number,
-    "passenger_name": booking.passenger_name,
-    "passenger_age": booking.passenger_age,
-    "status": booking.booking_status,
-
-    # QR Ticket
-    "qr_code": booking.qr_code,
-    "ticket_status": booking.ticket_status,
-})
-        
-    return result
-
-@app.put("/cancel-booking/{booking_id}")
-def cancel_booking(
-    booking_id: int,
-    db: Session = Depends(get_db)
-):
-
-    booking = db.query(Booking).filter(
-        Booking.id == booking_id
-    ).first()
-
-    if not booking:
+    try:
+        db.commit()
+    except Exception as e:
+        db.rollback()
         return {
             "success": False,
-            "message": "Booking not found"
+            "message": str(e)
         }
-
-    booking.booking_status = "CANCELLED"
-
-    db.commit()
 
     return {
         "success": True,
-        "message": "Booking cancelled successfully"
+        "message": f"{released} seat(s) released successfully"
     }
 
 @app.post("/admin/add-bus")
@@ -855,27 +863,45 @@ def delete_bus(
     db: Session = Depends(get_db)
 ):
 
+    # Check whether bus exists
     bus = db.query(Bus).filter(
         Bus.id == bus_id
     ).first()
 
     if not bus:
-
         return {
             "success": False,
             "message": "Bus not found"
         }
 
+    # Delete all bus stops
     db.query(BusStop).filter(
         BusStop.bus_id == bus_id
     ).delete(synchronize_session=False)
 
+    # Delete all temporary seat locks
     db.query(SeatLock).filter(
         SeatLock.bus_id == bus_id
     ).delete(synchronize_session=False)
 
+    # Delete all bookings of this bus
+    db.query(Booking).filter(
+        Booking.bus_id == bus_id
+    ).delete(synchronize_session=False)
+
+    # Delete the bus
     db.delete(bus)
-    db.commit()
+
+    try:
+        db.commit()
+
+    except Exception as e:
+        db.rollback()
+
+        return {
+            "success": False,
+            "message": str(e)
+        }
 
     return {
         "success": True,
@@ -1022,19 +1048,25 @@ def update_profile(
     db: Session = Depends(get_db)
 ):
 
+    # Check whether user exists
     user = db.query(User).filter(
         User.id == user_id
     ).first()
 
     if not user:
-
         return {
             "success": False,
             "message": "User not found"
         }
 
+    # Clean input
+    full_name = data.full_name.strip()
+    email = data.email.strip().lower()
+    phone = data.phone.strip()
+
+    # Check duplicate email
     existing_email = db.query(User).filter(
-        User.email == data.email,
+        User.email == email,
         User.id != user_id
     ).first()
 
@@ -1044,11 +1076,34 @@ def update_profile(
             "message": "Email already registered"
         }
 
-    user.full_name = data.full_name
-    user.email = data.email
-    user.phone = data.phone
+    # Check duplicate phone
+    existing_phone = db.query(User).filter(
+        User.phone == phone,
+        User.id != user_id
+    ).first()
 
-    db.commit()
+    if existing_phone:
+        return {
+            "success": False,
+            "message": "Phone number already registered"
+        }
+
+    # Update profile
+    user.full_name = full_name
+    user.email = email
+    user.phone = phone
+
+    try:
+        db.commit()
+        db.refresh(user)
+
+    except Exception as e:
+        db.rollback()
+
+        return {
+            "success": False,
+            "message": str(e)
+        }
 
     return {
         "success": True,
@@ -1074,12 +1129,20 @@ def forgot_password(
 
     user.password_hash = data.new_password
 
-    db.commit()
+    try:
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        return {
+            "success": False,
+            "message": str(e)
+        }
 
     return {
         "success": True,
         "message": "Password updated successfully"
     }
+
 
 @app.put("/change-password/{user_id}")
 def change_password(
@@ -1108,7 +1171,14 @@ def change_password(
 
     user.password_hash = data.new_password
 
-    db.commit()
+    try:
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        return {
+            "success": False,
+            "message": str(e)
+        }
 
     return {
         "success": True,
