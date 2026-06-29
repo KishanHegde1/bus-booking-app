@@ -1,4 +1,5 @@
 from fastapi import Depends, FastAPI
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 from .database import get_db
 from .models import Bus, User, Booking, BusStop, SeatLock
@@ -14,7 +15,9 @@ from .schemas import (
     ChangePasswordRequest,
     ForgotPasswordRequest,
     SeatLockRequest,
-    ReleaseSeatRequest
+    ReleaseSeatRequest,
+    QRCodeVerifyRequest,
+    MarkBoardedRequest
 )
 
 app = FastAPI()
@@ -222,6 +225,49 @@ def _delete_expired_locks(db: Session):
     db.query(SeatLock).filter(
         SeatLock.expires_at < datetime.now()
     ).delete(synchronize_session=False)
+
+
+def _database_now(db: Session):
+    current_time = db.query(func.now()).scalar()
+
+    if isinstance(current_time, datetime):
+        return current_time
+
+    return datetime.now()
+
+
+def _format_date(value):
+    if not value:
+        return ""
+
+    if hasattr(value, "strftime"):
+        return value.strftime("%Y-%m-%d")
+
+    return str(value)
+
+
+def _format_datetime(value):
+    if not value:
+        return ""
+
+    if hasattr(value, "strftime"):
+        return value.strftime("%Y-%m-%d %H:%M:%S")
+
+    return str(value)
+
+
+def _get_conductor(db: Session, conductor_id: int):
+    conductor = db.query(User).filter(
+        User.id == conductor_id
+    ).first()
+
+    if not conductor:
+        return None, "Conductor not found"
+
+    if (conductor.role or "").strip().lower() != "conductor":
+        return None, "User is not a conductor"
+
+    return conductor, None
 
 
 @app.get("/")
@@ -834,6 +880,301 @@ def release_seats(
         "success": True,
         "message": f"{released} seat(s) released successfully"
     }
+
+
+@app.get("/conductor/dashboard/{conductor_id}")
+def conductor_dashboard(
+    conductor_id: int,
+    db: Session = Depends(get_db)
+):
+
+    conductor, error = _get_conductor(
+        db,
+        conductor_id
+    )
+
+    if error:
+        return {
+            "success": False,
+            "message": error
+        }
+
+    tickets_verified = db.query(Booking).filter(
+        Booking.scanned_at.isnot(None)
+    ).count()
+
+    passengers_boarded = db.query(Booking).filter(
+        Booking.ticket_status == "USED"
+    ).count()
+
+    invalid_tickets = db.query(Booking).filter(
+        Booking.qr_code.isnot(None),
+        or_(
+            Booking.booking_status.is_(None),
+            Booking.booking_status != "CONFIRMED"
+        )
+    ).count()
+
+    already_used = db.query(Booking).filter(
+        Booking.ticket_status == "USED"
+    ).count()
+
+    db_now = _database_now(db)
+
+    return {
+        "success": True,
+        "conductor_name": conductor.full_name,
+        "conductor_id": conductor.id,
+        "tickets_verified": tickets_verified,
+        "passengers_boarded": passengers_boarded,
+        "invalid_tickets": invalid_tickets,
+        "already_used": already_used,
+        "last_sync": _format_datetime(db_now),
+        "today_date": _format_date(db_now.date())
+    }
+
+
+@app.post("/conductor/verify-ticket")
+def conductor_verify_ticket(
+    data: QRCodeVerifyRequest,
+    db: Session = Depends(get_db)
+):
+
+    qr_code = (data.qr_code or "").strip()
+
+    if not qr_code:
+        return {
+            "status": "INVALID"
+        }
+
+    booking = db.query(Booking).filter(
+        Booking.qr_code == qr_code
+    ).first()
+
+    if not booking:
+        return {
+            "status": "INVALID"
+        }
+
+    if booking.booking_status != "CONFIRMED":
+        return {
+            "status": "INVALID"
+        }
+
+    if booking.ticket_status == "USED":
+        return {
+            "status": "ALREADY_USED"
+        }
+
+    bus = db.query(Bus).filter(
+        Bus.id == booking.bus_id
+    ).first()
+
+    if not bus:
+        return {
+            "status": "INVALID"
+        }
+
+    return {
+        "status": "VALID",
+        "booking_id": booking.id,
+        "passenger_name": booking.passenger_name,
+        "seat_number": booking.seat_number,
+        "journey_date": _format_date(booking.journey_date),
+        "bus_name": bus.bus_name,
+        "bus_number": bus.bus_number,
+        "ticket_status": booking.ticket_status or "UNUSED"
+    }
+
+
+@app.post("/conductor/mark-boarded")
+def conductor_mark_boarded(
+    data: MarkBoardedRequest,
+    db: Session = Depends(get_db)
+):
+
+    if data.booking_id <= 0:
+        return {
+            "success": False,
+            "message": "Invalid booking ID"
+        }
+
+    booking = db.query(Booking).filter(
+        Booking.id == data.booking_id
+    ).first()
+
+    if not booking:
+        return {
+            "success": False,
+            "message": "Booking not found"
+        }
+
+    if booking.booking_status != "CONFIRMED":
+        return {
+            "success": False,
+            "message": "Booking is not confirmed"
+        }
+
+    if booking.ticket_status == "USED":
+        return {
+            "success": False,
+            "status": "ALREADY_USED",
+            "message": "Ticket already boarded"
+        }
+
+    scan_time = _database_now(db)
+
+    updated = db.query(Booking).filter(
+        Booking.id == data.booking_id,
+        Booking.booking_status == "CONFIRMED",
+        or_(
+            Booking.ticket_status.is_(None),
+            Booking.ticket_status != "USED"
+        )
+    ).update(
+        {
+            "ticket_status": "USED",
+            "scanned_at": scan_time
+        },
+        synchronize_session=False
+    )
+
+    if not updated:
+        db.rollback()
+
+        return {
+            "success": False,
+            "status": "ALREADY_USED",
+            "message": "Ticket already boarded"
+        }
+
+    try:
+        db.commit()
+
+    except Exception as e:
+        db.rollback()
+
+        return {
+            "success": False,
+            "message": str(e)
+        }
+
+    return {
+        "success": True,
+        "message": "Passenger marked as boarded successfully",
+        "booking_id": data.booking_id,
+        "ticket_status": "USED",
+        "scanned_at": _format_datetime(scan_time)
+    }
+
+
+@app.get("/conductor/history")
+def conductor_history(db: Session = Depends(get_db)):
+
+    bookings = db.query(Booking).filter(
+        Booking.scanned_at.isnot(None)
+    ).order_by(
+        Booking.scanned_at.desc(),
+        Booking.id.desc()
+    ).all()
+
+    result = []
+
+    for booking in bookings:
+        bus = db.query(Bus).filter(
+            Bus.id == booking.bus_id
+        ).first()
+
+        result.append({
+            "booking_id": booking.id,
+            "passenger_name": booking.passenger_name,
+            "seat_number": booking.seat_number,
+            "journey_date": _format_date(booking.journey_date),
+            "bus_name": bus.bus_name if bus else "",
+            "bus_number": bus.bus_number if bus else "",
+            "status": booking.ticket_status,
+            "scanned_time": _format_datetime(booking.scanned_at)
+        })
+
+    return result
+
+
+@app.get("/conductor/trip-information/{bus_id}")
+def conductor_trip_information(
+    bus_id: int,
+    db: Session = Depends(get_db)
+):
+
+    bus = db.query(Bus).filter(
+        Bus.id == bus_id
+    ).first()
+
+    if not bus:
+        return {
+            "success": False,
+            "message": "Bus not found"
+        }
+
+    today = _database_now(db).date()
+
+    booked_seats = db.query(Booking.seat_number).filter(
+        Booking.bus_id == bus_id,
+        Booking.journey_date == today,
+        Booking.booking_status == "CONFIRMED"
+    ).distinct().count()
+
+    total_seats = bus.total_seats or 0
+    available_seats = total_seats - booked_seats
+
+    if available_seats < 0:
+        available_seats = 0
+
+    occupancy_percentage = 0
+
+    if total_seats > 0:
+        occupancy_percentage = round(
+            (booked_seats / total_seats) * 100,
+            2
+        )
+
+    return {
+        "bus_name": bus.bus_name,
+        "bus_number": bus.bus_number,
+        "source": bus.source,
+        "destination": bus.destination,
+        "departure_time": bus.departure_time,
+        "arrival_time": bus.arrival_time,
+        "total_seats": total_seats,
+        "booked_seats": booked_seats,
+        "available_seats": available_seats,
+        "occupancy_percentage": occupancy_percentage
+    }
+
+
+@app.get("/conductor/profile/{user_id}")
+def conductor_profile(
+    user_id: int,
+    db: Session = Depends(get_db)
+):
+
+    conductor, error = _get_conductor(
+        db,
+        user_id
+    )
+
+    if error:
+        return {
+            "success": False,
+            "message": error
+        }
+
+    return {
+        "user_name": conductor.full_name,
+        "email": conductor.email,
+        "phone": conductor.phone,
+        "role": conductor.role
+    }
+
 
 @app.post("/admin/add-bus")
 def add_bus(

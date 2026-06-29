@@ -62,3 +62,47 @@ class ReleaseSeatRequest(BaseModel):
     bus_id: int
     journey_date: str
     seats: Optional[list[str]] = None
+
+
+class QRCodeVerifyRequest(BaseModel):
+    qr_code: str
+
+
+class MarkBoardedRequest(BaseModel):
+    booking_id: int
+
+
+class DashboardResponse(BaseModel):
+    success: bool
+    conductor_name: str
+    conductor_id: int
+    tickets_verified: int
+    passengers_boarded: int
+    invalid_tickets: int
+    already_used: int
+    last_sync: str
+    today_date: str
+
+
+class HistoryResponse(BaseModel):
+    booking_id: int
+    passenger_name: str
+    seat_number: str
+    journey_date: str
+    bus_name: str
+    bus_number: str
+    status: str
+    scanned_time: str
+
+
+class TripInformationResponse(BaseModel):
+    bus_name: str
+    bus_number: str
+    source: str
+    destination: str
+    departure_time: str
+    arrival_time: str
+    total_seats: int
+    booked_seats: int
+    available_seats: int
+    occupancy_percentage: float
